@@ -1,0 +1,7 @@
+{
+  "comment": "api-notifier 的 Mock 剧本(测试固件)。只验证 runner 流程: 调一次 http_request 就交卷。url 指向 127.0.0.1:1 必然连接拒绝, 网络错误是预期现象(不发真请求)。换成真 DeepSeek 后由 AI 现场读 docs/gateway.md 拼请求, 此文件不用",
+  "script": [
+    "{\"action\": \"tool\", \"tool\": \"http_request\", \"args\": {\"method\": \"POST\", \"url\": \"http://127.0.0.1:1/unreachable-on-purpose\", \"headers\": \"{\\\"Content-Type\\\": \\\"application/json\\\"}\", \"body\": \"{\\\"title\\\":\\\"mock\\\",\\\"content\\\":\\\"流程测试\\\"}\"}}",
+    "{\"action\": \"done\", \"result\": {\"note\": \"mock 流程走通(网络错误是预期的, 只验流程)\"}}"
+  ]
+}

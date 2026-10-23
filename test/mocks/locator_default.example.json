@@ -1,0 +1,7 @@
+{
+  "comment": "dingtalk-locator 的 Mock 剧本(测试固件)。复制本文件为 locator_default.json, 把 dir/uid/salt 换成你自己的真实值(见学习文档的'本机参数备忘'一节, 或用 find_uid 工具现场获取), 即可离线测试定位循环。salt 是敏感信息, 不要提交到 git。",
+  "script": [
+    "{\"action\": \"tool\", \"tool\": \"verify\", \"args\": {\"dir\": \"C:/Users/<你的用户名>/AppData/Roaming/DingTalk/<钉钉数据目录名>_v3\", \"uid\": \"<你的钉钉uid>\"}}",
+    "{\"action\": \"done\", \"result\": {\"dir\": \"C:/Users/<你的用户名>/AppData/Roaming/DingTalk/<钉钉数据目录名>_v3\", \"uid\": \"<你的钉钉uid>\", \"salt\": \"<从user_config解出的salt>\", \"db_path\": \"C:/Users/<你的用户名>/AppData/Roaming/DingTalk/<钉钉数据目录名>_v3/DBFiles/dingtalk.db\"}}"
+  ]
+}

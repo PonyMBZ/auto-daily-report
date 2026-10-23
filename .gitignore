@@ -1,0 +1,35 @@
+# 虚拟环境与 IDE
+.venv/
+.idea/
+
+# 本地配置含 API key, 永不入库; 入库的是 config.example.yaml 模板
+config.yaml
+
+# 旧调试文件(已被 config.yaml 取代), 防手滑提交
+debug_input.json
+*_key.txt
+
+# 测试产物
+test_output/
+__pycache__/
+
+# Go 构建产物(6.4 起 exe 放项目根: 与 config.yaml 同目录, 开机自启才找得到配置)
+/daily-report.exe
+host/daily-report.exe
+host/*.exe
+
+# 守护进程运行时产物
+logs/
+data/daemon_state.json
+git_cache/
+
+# 个人/私密文件 —— 仓库只保留脱敏示例(*.example.md / *.example.json)
+skills/api-notifier/docs/gateway.md
+test/mocks/locator_default.json
+学习进度.md
+
+# 运行产物
+reports/
+data/
+daily-report.new.exe
+daily-report.exe~

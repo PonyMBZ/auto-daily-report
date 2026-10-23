@@ -1,0 +1,67 @@
+# ============================================================
+# 日报服务 · 统一配置
+# 用法: 复制本文件为 config.yaml 再修改。
+#       config.yaml 已被 .gitignore 屏蔽, 不会进 git, 可放心填 key。
+# 优先级: 代码默认值 < config.yaml < 宿主 stdin 传入
+# ============================================================
+# 本地配置文件 —— 已从 git 忽略, 放心填真实值
+debug: true
+
+llm:
+  provider: mock
+  model: deepseek-flash
+  api_key: ""
+  mock_script_file: "test/mocks/locator_default.json"
+
+# 数据来源(多选, 第七章): 定时生成时会合并所有启用来源的消息。
+# 粘贴来源不需要开关——它在配置页的"手动生成"区随时可用。
+sources:
+  - dingtalk
+  # - git        # 取消注释即启用 git 来源(需配下面的 git 段)
+
+# git 来源(7.2): 从仓库的提交记录采集"我今天提交了什么"。
+# path 支持两种: 本地仓库目录, 或远程地址(https://... 或 git@... —— 首次自动克隆
+# 到 git_cache/ 缓存, 之后每次增量拉取; 私有仓库用本机 git 的全局凭证)。
+# author 是子串匹配(姓名/邮箱), 空 = 不过滤; 仓库级 author 覆盖全局。
+git:
+  repos: []          # 例: [{path: "git@gitlab.company.com:team/backend.git", name: "后端"}]
+  author: ""
+  since_hour: "9:00" # 时间窗起点, 与钉钉来源同一语义
+
+dingtalk:
+  uid: ""
+  salt: ""
+  data_dir: ""
+
+collect:
+  conversations: []        # 关注的会话(包含匹配): 群=写群名一部分, 如 "同事小李";
+                            # 单聊=写对方 uid(昵称无效, 用 tools/list_chats.py 查);
+                            # 空 = 全部会话
+  since_hour: "09:00"      # 每天几点开始收集(上班时间), 格式 HH:MM; 旧版纯数字 9 也兼容
+  only_mine: true          # true = 只保留我发的消息(合规,推荐); false = 所有人
+  max_messages: 500        # 单次最多提取条数, 防 LLM 上下文爆炸
+  date: "2026-10-22"                 # 采集哪天的消息, 空 = 今天; 格式 2026-10-22
+  output_file: "test_output/collect_result.json"  # 结果同时落盘到该文件(调试链用, 空=不落盘)
+
+report:
+  messages_file: "test_output/collect_result.json"  # 调试: 用上次采集的结果生成日报
+  corrections: "data/corrections.md"
+  date: ""                 # 生成哪天的日报, 空 = 跟随素材日期; 补写历史填 2026-10-22
+
+# ---- 通知渠道(6.3 / 6.3.1 改为 AI skill 驱动) ----
+# channels 是启用的渠道列表, 可插拔: 留空 = 全部静默
+notify:
+  channels: ["toast", "api"]   # toast=系统通知弹窗; api=AI 读文档拼请求(见 skills/api-notifier)
+  api:
+    # API 文档素材的位置。换通知服务(微信/ServerChan/Bark...)的步骤:
+    # 1. 把新服务的 API 文档写成 markdown 丢进 skills/api-notifier/docs/
+    # 2. 把这里的路径改成新文档 —— 完事, 零代码。
+    doc_file: "skills/api-notifier/docs/gateway.example.md"
+    # @人的手机号列表(7.3): 填了就会强制 atMobiles 字段 + content 末尾带 @号码,
+    # 在代码层(args_hook)保证, 不依赖 AI 记得。留空 = 不@任何人。
+    at_mobiles: []
+
+# ---- 定时触发(6.4, Go 守护进程用) ----
+schedule:
+  work_end: "18:30"    # 下班时间, 格式 HH:MM
+  lead_minutes: 30     # 下班前多少分钟触发日报流水线
