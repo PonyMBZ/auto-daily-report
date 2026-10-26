@@ -204,17 +204,26 @@ daily-report/
 │   ├── web.go                   #   本机配置界面 (net/http + 原生对话框, 无前端框架)
 │   ├── notify.go                #   可插拔通知渠道 (Channel 接口)
 │   └── skill.go                 #   RunSkill: 宿主↔skill 的唯一通道
-├── skills/                      # Python skills —— 每个能力一个目录
-│   ├── _shared/                 #   config(配置/编码契约) runner(agent loop) llm(mock/DeepSeek)
-│   ├── dingtalk-collector/      #   SKILL.md + run.py + tools/{decrypt,extract,list_chats}.py
-│   ├── dingtalk-locator/        #   AI 现场演绎式定位(读 SKILL.md 自由调工具)
-│   ├── git-collector/           #   git 提交来源(支持本地路径/远程URL自动缓存)
-│   ├── report-writer/           #   把消息筐蒸馏成日报 (prompts/ 与代码分离)
-│   └── api-notifier/            #   AI 读 API 文档拼请求的通知渠道
+├── skills/                      # Python skills —— 每个能力一个目录, 职责见下表
 ├── config.example.yaml          # 配置说明书(入库); 你的 config.yaml 被 gitignore
 ├── test/mocks/                  # Mock 剧本(测试固件, 离线测 agent loop 不发真请求)
 └── docs/img/                    # 架构图
 ```
+
+#### skills/ 每个模块是干什么的
+
+宿主只按"输入 → 输出"认识它们，内部怎么实现是各 skill 自己的事：
+
+| skill | 干什么用 | 输入 → 输出 | 驱动风格 |
+|---|---|---|---|
+| `dingtalk-locator` | **第一次安装时**自动找到你机器上的钉钉：安装目录、数据库文件、你的 uid、解密盐 | 一句模糊任务 → 验证过的 `{db_path, uid, salt}` | AI 驱动：扫盘拿到证据，现场决定下一步 |
+| `dingtalk-collector` | **每天**从本地钉钉数据库提取当天的聊天记录（先解密成临时库再查） | `{日期, 关注的会话}` → 统一格式的消息列表 | 代码驱动：步骤固定，不需要决策 |
+| `git-collector` | 从配置的 git 仓库拉当天的 commit 记录，当作工作痕迹 | `{仓库列表, 日期}` → 统一格式的消息列表 | 代码驱动 |
+| `report-writer` | **核心一步**：把消息筐蒸馏成结构化日报（今日完成/进行中/风险，每条带【主题】序号） | `{消息列表, 日期}` → Markdown 日报 + 落盘 | AI 驱动：prompts/ 与代码分离，调风格只改提示词 |
+| `api-notifier` | 通知渠道之一：AI 读你给的任意 API 文档，自己拼请求发送（换通知平台=换文档，不用改代码） | `{标题, 内容}` → HTTP 请求发出 | AI 驱动 |
+| `_shared/` | 公共底座，不是业务 skill：`runner`（agent loop 协议）、`llm`（Mock/DeepSeek 双实现）、`config`（配置读取与编码契约） | —— | —— |
+
+对应到日常运行：**locator 只在配置钉钉来源时跑一次**（结果落进 config），collector / git-collector / report-writer / api-notifier 才是每天 18:00 流水线上的角色。
 
 ### 3.3 skill 三件套
 
@@ -343,6 +352,17 @@ notify:
 
 Each skill is a reusable triad: `SKILL.md` (the AI's field manual) + `run.py` (facade — the only entry the host calls) + `tools/` (deterministic, self-documenting CLI tools). Skills come in two flavors: **code-driven** (fixed pipeline, no decisions needed) and **AI-driven** (locator / api-notifier — the LLM improvises a plan by reading SKILL.md and calling tools, using a MockLLM script in tests).
 
+What each skill in `skills/` does (the host only knows them by input → output):
+
+| Skill | Job | Input → Output | Style |
+|---|---|---|---|
+| `dingtalk-locator` | One-time setup: finds your DingTalk install, DB file, uid, and decryption salt on this machine | vague task → verified `{db_path, uid, salt}` | AI-driven |
+| `dingtalk-collector` | Daily: extracts today's chat records from the local DingTalk DB (decrypts to a temp copy first) | `{date, conversations}` → messages | code-driven |
+| `git-collector` | Pulls today's commits from configured repos as work traces | `{repos, date}` → messages | code-driven |
+| `report-writer` | The core step: distills the message basket into a structured daily report | `{messages, date}` → Markdown report | AI-driven (prompts/ separate from code) |
+| `api-notifier` | Notification channel: AI reads any API doc you give it and builds the request (switch platform = swap the doc) | `{title, body}` → HTTP request sent | AI-driven |
+| `_shared/` | Shared foundation, not a business skill: `runner` (agent loop), `llm` (Mock/DeepSeek), `config` | —— | —— |
+
 Key decisions, each with a recorded rationale:
 
 - **Orchestration ≠ implementation** — scheduling and doing evolve independently; tools never guess their environment.
@@ -359,7 +379,7 @@ Extending: new data source → implement `Source`; new notification → implemen
 | Branch | What's inside |
 |---|---|
 | `main` | The clean project |
-| `teaching` | The same code + the full chapter-by-chapter build log （学习进度.md) — how this project was built lesson by lesson, including every pitfall and how it was debugged |
+| teaching repo (private) | The same code + the full chapter-by-chapter build log （学习进度.md) — how this project was built lesson by lesson, including every pitfall and how it was debugged |
 
 ---
 
