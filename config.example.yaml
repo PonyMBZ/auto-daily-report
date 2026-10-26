@@ -58,9 +58,19 @@ notify:
     # 1. 把新服务的 API 文档写成 markdown 丢进 skills/api-notifier/docs/
     # 2. 把这里的路径改成新文档 —— 完事, 零代码。
     doc_file: "skills/api-notifier/docs/gateway.example.md"
-    # @人的手机号列表(7.3): 填了就会强制 atMobiles 字段 + content 末尾带 @号码,
-    # 在代码层(args_hook)保证, 不依赖 AI 记得。留空 = 不@任何人。
+    # @人的手机号列表(7.3): 填了再配合下面的 at_rule 才会真的@到人。
+    # 留空 = 不@任何人。
     at_mobiles: []
+    # @人规则(配置驱动): "@人怎么拼"是网关私有约定(字段名/要不要正文里也@),
+    # 所以规则本身也是配置, 代码(args_hook)只按这份声明强制兜底, 不写死网关细节。
+    # 整段删掉 = 不做@强制。三种典型形态:
+    #   钉钉自定义机器人网关: {field: "atMobiles", field_type: "array",  content_suffix: "@{mobile}"}
+    #   企业微信机器人:       {field: "mentioned_mobile_list", field_type: "comma", content_suffix: ""}
+    #   没有@能力的网关:      删掉 at_rule 段即可
+    at_rule:
+      field: "atMobiles"          # @人写到请求体哪个字段
+      field_type: "array"         # array=数组 | "comma"=逗号分隔字符串
+      content_suffix: "@{mobile}" # 若网关要求正文里也@, 填模板({mobile}=号码); 空 = 不动正文
 
 # ---- 定时触发(6.4, Go 守护进程用) ----
 schedule:

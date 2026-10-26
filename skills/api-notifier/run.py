@@ -83,26 +83,43 @@ def main() -> int:
     task = json.dumps({"title": title, "content": content, "api_doc": api_doc},
                       ensure_ascii=False)
 
-    # @人硬约束(7.3): 该网关要求"要@人, atMobiles 里得有号码, 且 content
-    # 末尾也必须出现 @+号码"。pony 曾在提示词/文档里写这条规则但 AI 经常不照做
-    # —— 提示词是请求, 不是保证。这类确定性规则交给 args_hook 在代码里强制:
-    # 无论 AI 拼出什么, 发出去之前必然合规。
-    at_mobiles = (cfg.get("notify") or {}).get("api", {}).get("at_mobiles", [])
+    # @人硬约束(7.3 → 重构为配置驱动): "@人怎么拼"是网关私有约定——
+    # 有的要 atMobiles + content 末尾 @号码, 企业微信要 mentioned_mobile_list
+    # 逗号串, 有的干脆没有@能力。所以字段名/格式不写死, 由 config.yaml 的
+    # notify.api.at_rule 声明, 代码只负责"按声明强制兜底":
+    #   at_rule:                      # 整段删掉 = 不做任何@强制
+    #     field: "atMobiles"          # @人写到请求体哪个字段
+    #     field_type: "array"         # array=数组 | "comma"=逗号分隔字符串
+    #     content_suffix: "@{mobile}" # 若网关要求正文里也@, 填模板({mobile}=号码);
+    #                                 # 空字符串 = 只填字段, 不动正文
+    # 无论 AI 拼出什么, 发出去之前必然按这份声明合规 —— 提示词是请求, 代码是法律,
+    # 但法律本身也是配置, 换网关只改配置不改法典。
+    api_cfg = (cfg.get("notify") or {}).get("api", {})
+    at_mobiles = api_cfg.get("at_mobiles", [])
+    at_rule = api_cfg.get("at_rule") or {}
 
     def enforce_at_rule(tool, args):
-        if tool != "http_request" or not at_mobiles:
+        if tool != "http_request" or not at_mobiles or not at_rule:
+            return args
+        field = at_rule.get("field", "")
+        if not field:
             return args
         try:
             body = json.loads(args.get("body", ""))
         except (json.JSONDecodeError, TypeError):
             return args  # body 还不是合法 JSON, 让 AI 自己看到工具报错再改
-        body["atMobiles"] = list(at_mobiles)
-        content = str(body.get("content", "")).rstrip()
-        for m in at_mobiles:
-            # 要求的是"末尾"必须有: 中间出现过不算, 结尾没有就补到最后一行
-            if not content.endswith("@" + m):
-                content += "\n@" + m
-        body["content"] = content
+        if at_rule.get("field_type", "array") == "comma":
+            body[field] = ",".join(at_mobiles)  # 企业微信风格: 逗号分隔字符串
+        else:
+            body[field] = list(at_mobiles)
+        suffix_tpl = at_rule.get("content_suffix", "")
+        if suffix_tpl:
+            content = str(body.get("content", "")).rstrip()
+            for m in at_mobiles:
+                # 要求的是"末尾"必须有: 中间出现过不算, 结尾没有就补到最后一行
+                if not content.endswith(suffix_tpl.replace("{mobile}", m)):
+                    content += "\n" + suffix_tpl.replace("{mobile}", m)
+            body["content"] = content
         return dict(args, body=json.dumps(body, ensure_ascii=False))
 
     result = run_skill(SKILL_DIR, task=task, config={}, llm=llm,

@@ -145,7 +145,7 @@ daemon 运行后，**从托盘图标右键菜单点"打开配置界面"**（界�
 
 - **toast**：Windows 右下角弹窗（截断 200 字），点弹窗看全文
 - **api**：把日报全文推给你的机器人（钉钉/企业微信自定义机器人等）。AI 读 `API 通知文档路径` 指向的文档，自己拼请求——**换通知平台 = 换一份文档，零代码**
-- **@人的手机号**：填了才会在推送里 @你（代码强制 content 末尾带 @号码，不靠 AI 记）
+- **@人的手机号**：填了才会在推送里 @你。@人怎么拼（字段名、要不要正文里也 @）是各网关私有约定，所以规则本身也做成配置——`config.yaml` 的 `notify.api.at_rule` 声明，代码按声明强制兜底，不写死任何网关的细节
 
 **怎么测**：点页面底部"测试通知"，两种渠道各弹一次才算通。
 
@@ -201,10 +201,14 @@ notify:
   channels: [toast, api]      # toast=系统弹窗; api=AI 读文档拼请求
   api:
     doc_file: skills/api-notifier/docs/gateway.example.md   # 机器人 API 文档
-    at_mobiles: ["+86-13800000000"]           # 要@的人, 填了才会真的@
+    at_mobiles: ["+86-13800000000"]           # 要@的人, 配合 at_rule 才会真的@
+    at_rule:                                   # @人规则(网关私有约定, 所以也是配置)
+      field: "atMobiles"          # @人写到请求体哪个字段
+      field_type: "array"         # array=数组 | "comma"=逗号分隔字符串(企业微信风格)
+      content_suffix: "@{mobile}" # 网关要求正文里也@才填模板; 空 = 不动正文; 整段删=不@
 ```
 
-> 换通知机器人（企业微信 / ServerChan / Bark…）：把它的 API 文档写成 markdown，改 `doc_file` 指向它——**零代码**。@人规则（atMobiles + content 末尾 @号码）由代码强制保证，不依赖 AI 记得。
+> 换通知机器人（企业微信 / ServerChan / Bark…）：把它的 API 文档写成 markdown，改 `doc_file` 指向它——**零代码**。网关私有的 @人规则（字段名、格式、要不要正文里也 @）在 `at_rule` 里声明，代码（args_hook）按声明强制保证，不依赖 AI 记得——比如企业微信是 `mentioned_mobile_list` 逗号串且不动正文，删掉 `content_suffix` 再把 `field_type` 改成 `comma` 即可。
 
 ### 2.3 日常使用
 
@@ -223,7 +227,7 @@ notify:
 3. **18:00 没动静** —— daemon 没运行。托盘图标在 = 在运行。
 4. **"立即生成"的日期** —— 两个日期选择器（会话搜索 / 手动生成）已联动并记忆；定时任务永远生成"当天"，互不影响。
 5. **钉钉没抓到消息** —— 确认配置页"数据来源"勾了 dingtalk；确认钉钉在登录状态（数据库要能解密）。
-6. **@不到人** —— `at_mobiles` 必须填手机号；只写群不@就留空。
+6. **@不到人** —— `at_mobiles` 必须填手机号且 `at_rule` 段要存在；只写群不@就把 `at_mobiles` 留空。
 7. **DeepSeek 报 401** —— key 错了或欠费；报 402/429 —— 余额不足/限流。
 8. **想看原始消息** —— 每次生成同时落盘 `reports/<日期>.md` 与消息明细，AI 只是整理工。
 9. **开机自启没生效** —— 先看 `logs/launch.log`：有新增行说明进程起来了问题在内部（看 `daemon.log`）；没新增行说明 Windows 没拉起它（公司安全策略可能拦注册表自启）。自启是双保险（注册表 Run 键 + 启动文件夹 VBS），`autostart on` 会同时写两处；**移动/重命名 exe 后旧路径失效，重新执行一次 `autostart on` 即可**。
@@ -314,7 +318,7 @@ pipeline: 按时间合并排序 (统一 Message 契约: time/conversation/sender
 RunSkill("report-writer") ── SKILL.md(纪律) + summarize.md(规范) + 消息 → DeepSeek
    │                                    失败重试 3 次
    ▼
-NotifyAll: toast(截断200字) + api(AI 按 docs 拼请求, args_hook 强制 @人规则)
+NotifyAll: toast(截断200字) + api(AI 按 docs 拼请求, args_hook 按 at_rule 配置强制 @人)
    │
    └─ 全失败 → 降级: reports/<日期>-raw.md + 强提醒通知
 ```
@@ -390,6 +394,10 @@ notify:
   api:
     doc_file: skills/api-notifier/docs/gateway.example.md
     at_mobiles: ["+86-13800000000"]
+    at_rule:                   # gateway-specific @ rule, declared not hardcoded
+      field: "atMobiles"       #   array (DingTalk gateway) | comma string (WeCom)
+      field_type: "array"      #   content_suffix empty = don't touch the body
+      content_suffix: "@{mobile}"
 ```
 
 **Common pitfalls** (all learned the hard way):
@@ -397,7 +405,7 @@ notify:
 1. Config page buttons fail with `ERR_CONNECTION_REFUSED` → the daemon restarted and the port changed. Reopen from the tray menu.
 2. Only one daemon can run (system-wide named mutex) — the second one refuses to start.
 3. Nothing happened at 18:00 → no daemon is running.
-4. `@` mentions need `at_mobiles` filled; the rule (field + trailing `@number` in content) is **enforced in code**, not left to the LLM.
+4. `@` mentions need `at_mobiles` filled **and** an `at_rule` block; the rule (field name, format, trailing `@number` in content) is gateway-specific, so it's declared in config and **enforced in code**, not left to the LLM.
 5. DeepSeek 401/429 → wrong key / out of credits.
 6. Autostart didn't fire → check `logs/launch.log` first: a new line means Windows launched the process (look inside `daemon.log`); no new line means Windows never launched it (corporate policy may block registry Run entries). Autostart is dual-channel (registry Run key + Startup-folder VBS, both hidden, no console window); if you move or rename the exe, re-run `autostart on` once to rewrite the paths.
 
@@ -421,7 +429,7 @@ What each skill in `skills/` does (the host only knows them by input → output)
 Key decisions, each with a recorded rationale:
 
 - **Orchestration ≠ implementation** — scheduling and doing evolve independently; tools never guess their environment.
-- **AI for judgment, code for invariants** — hard rules (`@` mention format, UTF-8 stdio, retry/fallback) are enforced in code; "prompts are requests, code is law."
+- **AI for judgment, code for invariants** — hard rules (the `@` mention rule, UTF-8 stdio, retry/fallback) are enforced in code; "prompts are requests, code is law." And the law is config: the `@` rule's field name/format lives in `notify.api.at_rule`, so swapping gateways changes config, not code.
 - **Source interface investment** — one `Message` contract + `Source` interface means adding a data source is ~20 lines, zero pipeline changes.
 - **Encoding pinned in code** — on Windows, Python stdio encoding silently follows the environment; all stdin/stdout is explicit UTF-8 bytes.
 - **Observability first** — failure logs carry the skill's own error JSON / stderr, because an exit code is a status, not a cause.
