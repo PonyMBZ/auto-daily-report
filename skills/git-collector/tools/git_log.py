@@ -80,7 +80,7 @@ def main() -> int:
     parser.add_argument("--until-epoch", required=True, type=int,
                         help="窗口终点(不含), Unix 秒")
     parser.add_argument("--author", default="",
-                        help="提交人子串匹配(姓名或邮箱), 空=全部")
+                        help="提交人子串匹配(姓名或邮箱), 逗号分隔多个=任一命中, 空=全部")
     parser.add_argument("--max", type=int, default=100, help="最多返回条数")
     args = parser.parse_args()
 
@@ -102,7 +102,11 @@ def main() -> int:
            f"--pretty=format:{PRETTY}",
            f"-n{SCAN_CAP}"]
     if args.author:
-        cmd.append(f"--author={args.author}")
+        # 多个 --author 在 git log 里是 OR 语义(任一命中), 逗号分隔展开
+        for a in args.author.split(","):
+            a = a.strip()
+            if a:
+                cmd.append(f"--author={a}")
 
     # git 不存在 / 仓库无效 / 命令失败: 错误信息在 stderr, 一并交给调用方
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",

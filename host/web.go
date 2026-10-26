@@ -74,7 +74,7 @@ var editableFields = []fieldSpec{
 	{Path: []string{"collect", "only_mine"}, Label: "只整理我发的消息(合规, 推荐开着)", Kind: "bool", Section: "source"},
 
 	{Path: []string{"git", "repos"}, Label: "git 仓库列表(每行一个仓库)", Kind: "repos", Section: "source", Requires: "sources:git"},
-	{Path: []string{"git", "author"}, Label: "提交作者过滤(姓名/邮箱子串, 留空=全部人)", Kind: "string", Section: "source", Requires: "sources:git"},
+	{Path: []string{"git", "author"}, Label: "提交作者过滤(留空=全部人; 可用下方按钮从仓库读取后勾选)", Kind: "string", Section: "source", Requires: "sources:git"},
 
 	{Path: []string{"collect", "since_hour"}, Label: "每天几点开始收集", Kind: "time", Section: "time"},
 	{Path: []string{"schedule", "work_end"}, Label: "下班时间", Kind: "time", Section: "time"},
@@ -281,6 +281,14 @@ var pageTmpl = template.Must(template.New("cfg").Parse(`<!DOCTYPE html>
   </div>
   {{end}}
   {{if .Requires}}</div>{{end}}
+  {{if eq .Key "git>author"}}
+  <div id="author-picker">
+    <button class="ghost mini" type="button" onclick="loadGitAuthors()">📖 从仓库读取作者</button>
+    <div id="author-results" style="font-size:13px;color:#6b7280;margin:8px 0;line-height:1.9"></div>
+    <button class="ghost mini" type="button" id="apply-authors" style="display:none"
+            onclick="applyAuthors()">✔ 把勾选的作者填入上方输入框</button>
+  </div>
+  {{end}}
   {{if eq .Key "collect>conversations"}}
   <div id="chat-picker">
     <div class="field" style="margin-top:6px">
@@ -435,6 +443,49 @@ function renderChatList(chats) {
 function applyChats() { // 勾选项 -> 回填上方输入框(逗号分隔), 保存流程不变
   const vals = [...document.querySelectorAll('.chat-cb:checked')].map(cb => cb.value);
   document.querySelector('[name="collect>conversations"]').value = vals.join(', ');
+}
+// ---- 作者选择器(读仓库 -> 多选 -> 回填), 交互抄会话选择器, 后端是 list_authors ----
+// 勾选值用"姓名 <邮箱>"整体做子串匹配: 够精确(同名不同邮箱能区分), 又符合
+// author 字段"子串匹配"的既有语义, 回填后 config.yaml 依然人类可读。
+function splitAuthors() {
+  const raw = document.querySelector('[name="git>author"]').value;
+  return raw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+}
+async function loadGitAuthors() {
+  const btn = event.target;
+  const box = document.getElementById('author-results');
+  syncRepos(); // 先把当前页(可能未保存)的仓库行同步进隐藏域, 读的是最新输入
+  const repos = document.getElementById('repos-json').value;
+  btn.disabled = true; btn.textContent = '读取中…(远程仓库首次会克隆)';
+  try {
+    const r = await fetch('/git-authors', {method: 'POST',
+      body: new URLSearchParams({repos})});
+    if (!r.ok) { box.innerHTML = '<span style="color:#dc2626">读取失败: '
+      + escapeHtml(await r.text()) + '</span>'; return; }
+    renderAuthorList((await r.json()).authors || []);
+  } finally { btn.disabled = false; btn.textContent = '📖 从仓库读取作者'; }
+}
+function renderAuthorList(authors) {
+  const box = document.getElementById('author-results');
+  const applyBtn = document.getElementById('apply-authors');
+  if (!authors.length) {
+    box.innerHTML = '仓库里没读到任何提交记录';
+    applyBtn.style.display = 'none';
+    return;
+  }
+  const picked = new Set(splitAuthors()); // 已配置的作者回显成勾选
+  box.innerHTML = '共 ' + authors.length + ' 位作者(全部仓库去重):<br>' +
+    authors.map(a =>
+      '<label class="check" style="display:flex;margin:2px 0">' +
+      '<input type="checkbox" class="author-cb" value="' + escapeHtml(a) + '"' +
+      (picked.has(a) ? ' checked' : '') + '> ' +
+      '<span>' + escapeHtml(a) + '</span></label>'
+    ).join('');
+  applyBtn.style.display = '';
+}
+function applyAuthors() {
+  const vals = [...document.querySelectorAll('.author-cb:checked')].map(cb => cb.value);
+  document.querySelector('[name="git>author"]').value = vals.join(', ');
 }
 // 两个日期选择器(会话搜索 / 手动生成)。
 // 手动生成的日期用 localStorage 记住上次选择(7.3 修) —— 生成/保存后页面整体
@@ -788,6 +839,51 @@ func (s *configServer) handleSearchChats(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(res)
 }
 
+// handleGitAuthors —— 读取 git 仓库的作者列表, 给配置页"提交作者过滤"做多选框。
+// 与 search-chats 同模式: 前端传当前页面上(可能还没保存)的仓库行,
+// 经 stdin 覆盖喂给 git-collector 的 list_authors 动作 —— 用户新加了仓库
+// 不用先保存配置就能读作者, 少一步"保存->读取->再保存"的折返。
+func (s *configServer) handleGitAuthors(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "表单解析失败", 400)
+		return
+	}
+	var repos []map[string]any
+	if raw := strings.TrimSpace(r.Form.Get("repos")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &repos); err != nil {
+			http.Error(w, "仓库列表不是合法 JSON", 400)
+			return
+		}
+	}
+	if len(repos) == 0 {
+		http.Error(w, "还没有配置任何仓库(先在上方添加并确保路径正确)", 400)
+		return
+	}
+	res, code, err := RunSkill(s.root, "git-collector", map[string]any{
+		"debug": false,
+		"git": map[string]any{
+			"action": "list_authors",
+			"repos":  repos,
+		},
+	})
+	if err != nil || code != 0 || res["ok"] != true {
+		msg := "skill 返回了非预期结果"
+		switch {
+		case err != nil:
+			msg = err.Error()
+		case res != nil:
+			if e, ok := res["error"].(string); ok {
+				msg = e
+			}
+		}
+		log.Printf("git-authors 失败: exit=%d msg=%s", code, msg)
+		http.Error(w, fmt.Sprintf("读取作者失败: %s (skill exit=%d)", msg, code), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(res)
+}
+
 // handleGenerate —— 手动生成: 界面粘贴一段文字 + 选日期, 立刻跑一遍完整流水线。
 // 粘贴内容经 pasteMessages 转成契约消息, 作为 extra 与启用来源的消息合并 ——
 // 复用 RunPipeline, 不复制任何生成逻辑。生成结果走常规通知渠道(toast 弹出)。
@@ -896,6 +992,7 @@ func RunConfigServer(root string, autoOpen bool) error {
 	mux.HandleFunc("/save", s.handleSave)
 	mux.HandleFunc("/notify-test", s.handleNotifyTest)
 	mux.HandleFunc("/search-chats", s.handleSearchChats)
+	mux.HandleFunc("/git-authors", s.handleGitAuthors)
 	mux.HandleFunc("/generate", s.handleGenerate)
 	mux.HandleFunc("/autostart", s.handleAutostart)
 	mux.HandleFunc("/pick-dir", s.handlePickDir)

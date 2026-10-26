@@ -50,6 +50,42 @@ def day_window_epochs(date_str: str, since) -> tuple[int, int]:
     return start, end
 
 
+def list_authors(repos: list) -> int:
+    """汇总所有仓库的去重作者, 给配置界面的多选框用。
+
+    单仓失败不拖垮全局(与收集模式一致), 能读出一个是一个;
+    全部失败才算失败。去重在工具内按邮箱做, 这里按显示名再兜一层
+    (跨仓库同邮箱不同显示名时保留第一个, 界面不需要那么较真)。
+    """
+    cache_dir = project_root() / "git_cache"
+    authors: dict[str, None] = {}
+    errors = []
+    for repo in repos:
+        proc = subprocess.run(
+            [sys.executable, str(SKILL_DIR / "tools" / "list_authors.py"),
+             "--repo", str(repo.get("path", "")),
+             "--cache-dir", str(cache_dir)],
+            capture_output=True, text=True, encoding="utf-8")
+        try:
+            result = json.loads(proc.stdout.strip() or "{}")
+        except json.JSONDecodeError:
+            result = {"ok": False, "error": "tool_bad_output",
+                      "detail": proc.stdout[:300]}
+        if not result.get("ok"):
+            errors.append(f"{repo.get('path')}: {result.get('error')} "
+                          f"{result.get('detail', '')}")
+            continue
+        for a in result.get("authors", []):
+            authors.setdefault(a)
+    if not authors and errors:
+        print(json.dumps({"ok": False, "error": "all_repos_failed",
+                          "detail": "; ".join(errors)}, ensure_ascii=False))
+        return 1
+    print(json.dumps({"ok": True, "authors": sorted(authors, key=str.lower),
+                      "repo_errors": errors}, ensure_ascii=False))
+    return 0
+
+
 def main() -> int:
     cfg = merge_stdin_overrides(load_config())
     git = cfg.get("git") or {}
@@ -59,6 +95,11 @@ def main() -> int:
                           "hint": "config.yaml 的 git.repos 还没配仓库路径"},
                          ensure_ascii=False))
         return 1
+
+    # action="list_authors": 汇总所有仓库的去重作者列表(前端做作者多选框用),
+    # 不做时间窗过滤。与 dingtalk-collector 的 list_chats 同一模式。
+    if git.get("action") == "list_authors":
+        return list_authors(repos)
 
     date = git.get("date", "")  # 空 = 今天; 宿主传入口令覆盖配置
     since, until = day_window_epochs(date, git.get("since_hour", "9:00"))
