@@ -159,7 +159,7 @@ notify:
 | 手动生成 | 配置页底部"手动生成"区，可粘贴补充内容，可选任意日期（补写昨天） |
 | 测试通知 | 配置页"测试通知"按钮 |
 | 看历史日报 | `reports/` 按日期归档；托盘菜单"打开报告目录" |
-| 开机自启 | 托盘菜单一键开关（写注册表） |
+| 开机自启 | 托盘菜单一键开关，双保险写注册表 Run 键 + 启动文件夹 VBS，完全无窗口 |
 
 ### 2.4 ⚠️ 新手会踩的坑（都是真实踩过的）
 
@@ -171,6 +171,7 @@ notify:
 6. **@不到人** —— `at_mobiles` 必须填手机号；只写群不@就留空。
 7. **DeepSeek 报 401** —— key 错了或欠费；报 402/429 —— 余额不足/限流。
 8. **想看原始消息** —— 每次生成同时落盘 `reports/<日期>.md` 与消息明细，AI 只是整理工。
+9. **开机自启没生效** —— 先看 `logs/launch.log`：有新增行说明进程起来了问题在内部（看 `daemon.log`）；没新增行说明 Windows 没拉起它（公司安全策略可能拦注册表自启）。自启是双保险（注册表 Run 键 + 启动文件夹 VBS），`autostart on` 会同时写两处；**移动/重命名 exe 后旧路径失效，重新执行一次 `autostart on` 即可**。
 
 ### 2.5 常用命令
 
@@ -334,6 +335,7 @@ notify:
 3. Nothing happened at 18:00 → no daemon is running.
 4. `@` mentions need `at_mobiles` filled; the rule (field + trailing `@number` in content) is **enforced in code**, not left to the LLM.
 5. DeepSeek 401/429 → wrong key / out of credits.
+6. Autostart didn't fire → check `logs/launch.log` first: a new line means Windows launched the process (look inside `daemon.log`); no new line means Windows never launched it (corporate policy may block registry Run entries). Autostart is dual-channel (registry Run key + Startup-folder VBS, both hidden, no console window); if you move or rename the exe, re-run `autostart on` once to rewrite the paths.
 
 ### 3. Design
 

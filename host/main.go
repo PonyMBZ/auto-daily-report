@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
 func main() {
@@ -23,6 +26,10 @@ func main() {
 	}
 
 	root := projectRoot()
+	// 启动留痕: 从自启项(Run键/启动文件夹)拉起时没有任何控制台,
+	// 一旦"开机没启动", 没有这行记录就能立刻断定问题在 Windows 触发层(被策略拦截),
+	// 而不是进程启动后崩了 —— 不用再猜。
+	logLaunch(root)
 
 	switch os.Args[1] {
 	case "run":
@@ -99,4 +106,20 @@ func main() {
 		fmt.Printf("未知命令: %s\n", os.Args[1])
 		os.Exit(1)
 	}
+}
+
+// logLaunch 进程启动第一行就写日志(先于一切可能失败的初始化)。
+// 单独写 launch.log 而不复用 daemon.log 的原因:
+// daemon.log 是 RunDaemon 里才打开的; 如果进程根本没被 Windows 拉起,
+// daemon.log 不会有任何变化 —— 两种情况的区分全靠 launch.log 有没有新增行。
+func logLaunch(root string) {
+	line := fmt.Sprintf("%s pid=%d args=%s\n",
+		time.Now().Format("2006-01-02 15:04:05"), os.Getpid(), strings.Join(os.Args[1:], " "))
+	f, err := os.OpenFile(filepath.Join(root, "logs", "launch.log"),
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return // 日志写不上不是致命伤, 静默放过
+	}
+	defer f.Close()
+	f.WriteString(line)
 }
