@@ -70,11 +70,11 @@ var editableFields = []fieldSpec{
 	{Path: []string{"sources"}, Label: "启用的数据来源(可多选, 消息合并整理)", Kind: "list", Options: []string{"dingtalk", "git"}, Section: "source"},
 	{Path: []string{"dingtalk", "data_dir"}, Label: "钉钉数据目录(留空=用定位 skill 自动找)", Kind: "string", Picker: "dir", Section: "source"},
 	{Path: []string{"dingtalk", "uid"}, Label: "钉钉内部 uid(留空=自动获取)", Kind: "string", Section: "source"},
-	{Path: []string{"collect", "conversations"}, Label: "关注的会话(逗号分隔, 留空=全部)", Kind: "tags", Section: "source"},
+	{Path: []string{"collect", "conversations"}, Label: "关注的会话(每行一个, 留空=全部)", Kind: "tags", Section: "source"},
 	{Path: []string{"collect", "only_mine"}, Label: "只整理我发的消息(合规, 推荐开着)", Kind: "bool", Section: "source"},
 
 	{Path: []string{"git", "repos"}, Label: "git 仓库列表(每行一个仓库)", Kind: "repos", Section: "source", Requires: "sources:git"},
-	{Path: []string{"git", "author"}, Label: "提交作者过滤(留空=全部人; 可用下方按钮从仓库读取后勾选)", Kind: "string", Section: "source", Requires: "sources:git"},
+	{Path: []string{"git", "author"}, Label: "提交作者过滤(每行一个, 留空=全部人; 可用下方按钮从仓库读取后勾选)", Kind: "tags", Section: "source", Requires: "sources:git"},
 
 	{Path: []string{"collect", "since_hour"}, Label: "每天几点开始收集", Kind: "time", Section: "time"},
 	{Path: []string{"schedule", "work_end"}, Label: "下班时间", Kind: "time", Section: "time"},
@@ -82,7 +82,7 @@ var editableFields = []fieldSpec{
 
 	{Path: []string{"notify", "channels"}, Label: "通知渠道", Kind: "list", Options: []string{"toast", "api"}, Section: "notify"},
 	{Path: []string{"notify", "api", "doc_file"}, Label: "API 通知文档路径", Kind: "string", Picker: "locate", Requires: "notify>channels:api", Section: "notify"},
-	{Path: []string{"notify", "api", "at_mobiles"}, Label: "@人的手机号(逗号分隔, 留空=不@)", Kind: "tags", Requires: "notify>channels:api", Section: "notify"},
+	{Path: []string{"notify", "api", "at_mobiles"}, Label: "@人的手机号(每行一个, 留空=不@)", Kind: "tags", Requires: "notify>channels:api", Section: "notify"},
 }
 
 // normTimeValue 把配置值规整成 time 输入框要求的 "HH:MM"(必须两位补零)。
@@ -156,6 +156,42 @@ func setNodeValue(doc *yaml.Node, path []string, raw string, kind string) bool {
 		node.Tag, node.Style = strNode.Tag, strNode.Style
 	}
 	node.Value = raw
+	return true
+}
+
+// setNodeSeq 把 path 处的节点替换为字符串序列节点(路径不存在则新建)。
+// 只服务 tags 类字段: 旧配置里它可能是逗号分隔的纯标量(前端改版前),
+// 第一次保存时就地升级成序列。路径来自 editableFields 白名单, 新建是安全的
+// (不违背 setNodeValue 的"不新建"哲学 —— 那个防的是手滑路径名)。
+func setNodeSeq(doc *yaml.Node, path []string, values []string) bool {
+	cur := doc.Content[0]
+	for _, key := range path[:len(path)-1] {
+		next := (*yaml.Node)(nil)
+		for i := 0; i+1 < len(cur.Content); i += 2 {
+			if cur.Content[i].Value == key {
+				next = cur.Content[i+1]
+				break
+			}
+		}
+		if next == nil || next.Kind != yaml.MappingNode {
+			return false
+		}
+		cur = next
+	}
+	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	for _, v := range values {
+		seq.Content = append(seq.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v})
+	}
+	last := path[len(path)-1]
+	for i := 0; i+1 < len(cur.Content); i += 2 {
+		if cur.Content[i].Value == last {
+			cur.Content[i+1] = seq
+			return true
+		}
+	}
+	cur.Content = append(cur.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: last}, seq)
 	return true
 }
 
@@ -264,6 +300,12 @@ var pageTmpl = template.Must(template.New("cfg").Parse(`<!DOCTYPE html>
     <button class="ghost mini" type="button" onclick="addRepoRow()" style="margin-top:8px">+ 添加仓库</button>
     {{/* 提交载体: JS 把各行同步成 JSON 塞这里, 后端解析后重建 YAML 序列 */}}
     <input type="hidden" name="{{.Key}}" id="repos-json">
+  </div>
+  {{else if eq .Type "tags"}}
+  {{/* 自由标签: 多行文本, 一行一个(条目可能含逗号, 如群名"小书,王碧,...") */}}
+  <div class="field">
+    <textarea name="{{.Key}}" rows="3"
+      style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-family:inherit">{{.Value}}</textarea>
   </div>
   {{else}}
   <div class="field">
@@ -402,9 +444,9 @@ function togglePw(key, btn) {
 // 后端调 collector 的 list_chats 模式: 解密库扫描当天, 返回"有我发言"的会话列表。
 // 单聊 title 由后端经用户资料表翻译成昵称; 翻译不了的(对方资料不在本地库)
 // 才退回 uid, 靠消息摘要辨认。
-function splitConvs() { // 上方输入框的值 -> 数组(中英文逗号都认, 与保存逻辑一致)
+function splitConvs() { // 上方输入框的值 -> 数组(一行一个, 与保存逻辑一致)
   const raw = document.querySelector('[name="collect>conversations"]').value;
-  return raw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  return raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean); // 一行一个(条目可含逗号)
 }
 function escapeHtml(s) { // 列表内容来自聊天消息摘要, 必须转义防 XSS
   return s.replace(/[&<>"']/g, c =>
@@ -440,16 +482,16 @@ function renderChatList(chats) {
     ).join('');
   applyBtn.style.display = '';
 }
-function applyChats() { // 勾选项 -> 回填上方输入框(逗号分隔), 保存流程不变
+function applyChats() { // 勾选项 -> 回填上方输入框(一行一个), 保存流程不变
   const vals = [...document.querySelectorAll('.chat-cb:checked')].map(cb => cb.value);
-  document.querySelector('[name="collect>conversations"]').value = vals.join(', ');
+  document.querySelector('[name="collect>conversations"]').value = vals.join('\n');
 }
 // ---- 作者选择器(读仓库 -> 多选 -> 回填), 交互抄会话选择器, 后端是 list_authors ----
 // 勾选值用"姓名 <邮箱>"整体做子串匹配: 够精确(同名不同邮箱能区分), 又符合
 // author 字段"子串匹配"的既有语义, 回填后 config.yaml 依然人类可读。
 function splitAuthors() {
   const raw = document.querySelector('[name="git>author"]').value;
-  return raw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  return raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean); // 一行一个
 }
 async function loadGitAuthors() {
   const btn = event.target;
@@ -485,7 +527,7 @@ function renderAuthorList(authors) {
 }
 function applyAuthors() {
   const vals = [...document.querySelectorAll('.author-cb:checked')].map(cb => cb.value);
-  document.querySelector('[name="git>author"]').value = vals.join(', ');
+  document.querySelector('[name="git>author"]').value = vals.join('\n');
 }
 // 两个日期选择器(会话搜索 / 手动生成)。
 // 手动生成的日期用 localStorage 记住上次选择(7.3 修) —— 生成/保存后页面整体
@@ -638,14 +680,23 @@ func (s *configServer) handlePage(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case "tags":
-			// 自由标签: YAML 序列 ↔ 逗号分隔文本
+			// 自由标签: YAML 序列 ↔ 换行分隔文本。
+			// 为什么用换行不用逗号: 会话名/群名本身可能带逗号(真实案例: 群名
+			// "小书,王碧,胡艺卓,王慧敏,..." 按逗号拆被劈成 5 个条目)。换行
+			// 是用户输入里几乎不可能出现的字符, 做分隔符最安全。
+			view.Type = "tags"
 			var items []string
-			if node != nil && node.Kind == yaml.SequenceNode {
+			switch {
+			case node != nil && node.Kind == yaml.SequenceNode:
 				for _, item := range node.Content {
 					items = append(items, item.Value)
 				}
+			case node != nil && node.Kind == yaml.ScalarNode && node.Value != "":
+				// 旧配置可能是逗号分隔的纯标量(前端改版前) —— 原样显示,
+				// 用户保存一次后自然升级为序列
+				items = append(items, node.Value)
 			}
-			view.Value = strings.Join(items, ", ")
+			view.Value = strings.Join(items, "\n")
 		case "bool":
 			// 开关: 读 YAML 布尔节点的文本形式("true"/"false")决定滑块位置
 			view.Type = "switch"
@@ -713,19 +764,19 @@ func (s *configServer) handleSave(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if f.Kind == "tags" {
-			node := getNode(doc, f.Path)
-			if node == nil || node.Kind != yaml.SequenceNode {
-				continue
-			}
-			node.Content = nil
 			raw := r.Form.Get(key)
+			var items []string
+			// 只按换行切, 不认逗号 —— 逗号在条目内部是合法字符(群名可能带逗号),
+			// 认逗号会导致"整条独占一行"的群名往返保存一次又被拆散。
 			for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
-				return r == ',' || r == '，' // 中英文逗号都认
+				return r == '\n' || r == '\r'
 			}) {
 				if v := strings.TrimSpace(part); v != "" {
-					node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v})
+					items = append(items, v)
 				}
 			}
+			// 旧配置可能是纯标量, setNodeSeq 会就地替换成序列
+			setNodeSeq(doc, f.Path, items)
 			continue
 		}
 		if f.Kind == "repos" {

@@ -104,6 +104,10 @@ def main() -> int:
     date = git.get("date", "")  # 空 = 今天; 宿主传入口令覆盖配置
     since, until = day_window_epochs(date, git.get("since_hour", "9:00"))
     author = git.get("author", "")
+    # 兼容两种配置形态: 旧版逗号分隔字符串 / 新版 YAML 序列(前端改成一行一个后)。
+    # 统一归一成逗号串, 下游 git_log 按逗号展开为多个 --author(OR 语义)
+    if isinstance(author, list):
+        author = ",".join(str(a) for a in author)
     max_per_repo = int(git.get("max_per_repo", 50))
 
     messages = []

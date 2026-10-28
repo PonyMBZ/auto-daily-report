@@ -11,6 +11,7 @@ dingtalk-collector 的门面 —— 宿主唯一调用的入口。
 """
 import datetime
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -85,6 +86,10 @@ def main() -> int:
 
         # 第二工位: 提取。date 决定"哪天", 空 = 今天
         convs = cl.get("conversations") or []
+        # 兼容两种配置形态: 新版 YAML 序列(每行一个) / 旧版逗号分隔字符串。
+        # str 必须显式拆开 —— ",".join("小书,王碧") 会把字符串当字符数组拼炸
+        if isinstance(convs, str):
+            convs = [s.strip() for s in re.split(r"[,，]", convs) if s.strip()]
         try:
             since, until = day_range_ms(cl.get("date", ""), cl.get("since_hour", "9:00"))
         except ValueError:

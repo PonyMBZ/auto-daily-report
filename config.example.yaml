@@ -22,11 +22,13 @@ sources:
 # git 来源(7.2): 从仓库的提交记录采集"我今天提交了什么"。
 # path 支持两种: 本地仓库目录, 或远程地址(https://... 或 git@... —— 首次自动克隆
 # 到 git_cache/ 缓存, 之后每次增量拉取; 私有仓库用本机 git 的全局凭证)。
-# author 是子串匹配(姓名/邮箱), 逗号分隔多个 = 任一命中, 空 = 不过滤;
-# 仓库级 author 覆盖全局。配置界面里可点"从仓库读取作者"按钮, 多选后自动回填。
+# author 是子串匹配(姓名/邮箱), 多个 = 任一命中, 空 = 不过滤;
+# 推荐写成 YAML 序列(配置界面保存就是这种形态, 一行一个);
+# 兼容老的逗号分隔字符串。仓库级 author 覆盖全局。
+# 配置界面里可点"从仓库读取作者"按钮, 多选后自动回填。
 git:
   repos: []          # 例: [{path: "git@gitlab.company.com:team/backend.git", name: "后端"}]
-  author: ""
+  author: []         # 例: ["mabingzheng", "Pony"] 或老的 "mabingzheng,Pony"
   since_hour: "9:00" # 时间窗起点, 与钉钉来源同一语义
 
 dingtalk:
