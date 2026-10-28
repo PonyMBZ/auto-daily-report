@@ -32,6 +32,11 @@ from pathlib import Path
 TYPE_TEXT = 1
 TYPE_IMAGE = 2
 TYPE_RICHTEXT = 1200
+# 3100 = 富文本卡片(钉钉新版的图文混排长消息, 2026-10 侦察发现 pony 的工作消息
+# 大多是这个类型)。结构与 1200 几乎一样: attachments[0].extension 是 JSON 字符串,
+# 但正文在 desc 字段而不是 markdown。解析不出来日报就是废的 —— 这种"量大且结构
+# 已知"的类型必须支持, 不能停在 [类型N] 占位。
+TYPE_RICHTEXT_CARD = 3100
 
 
 def load_conversations(con: sqlite3.Connection) -> dict:
@@ -87,12 +92,13 @@ def parse_content(content_type: int, raw: str, recall: int) -> str:
         return data.get("text", "")
     if content_type == TYPE_IMAGE:
         return "[图片]"
-    if content_type == TYPE_RICHTEXT:
-        # 富文本: attachments[0].extension 是另一个 JSON 字符串, 里面有 markdown 字段
+    if content_type in (TYPE_RICHTEXT, TYPE_RICHTEXT_CARD):
+        # 富文本: attachments[0].extension 是另一个 JSON 字符串。
+        # 1200 的正文在 markdown 字段, 3100 的在 desc 字段 —— 取谁用谁。
+        # 引用消息带 "> " 前缀, 去掉它让日报更干净
         try:
             ext = json.loads(data["attachments"][0]["extension"])
-            md = ext.get("markdown", "")
-            # 引用消息带 "> " 前缀, 去掉它让日报更干净
+            md = ext.get("markdown") or ext.get("desc") or ""
             return "\n".join(line.lstrip("> ") for line in md.splitlines()).strip()
         except (KeyError, IndexError, json.JSONDecodeError, TypeError):
             return "[富文本-解析失败]"
